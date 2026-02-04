@@ -112,6 +112,15 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
       // Optionally add to local store for immediate UX (keeps offline behavior)
       addQuestion(data.question);
 
+      // Notify other open tabs/devices to refresh their question cache (best-effort)
+      try {
+        const bc = new BroadcastChannel('exam-system');
+        bc.postMessage({ type: 'questions-updated', examType: data.question.examType, subject: data.question.subject, timestamp: new Date().toISOString() });
+        bc.close();
+      } catch (e) {
+        console.warn('BroadcastChannel not available:', e);
+      }
+
       setSuccessMessage(`Question added and saved to DB! ID: ${data.question.id}`);
       setShowSuccess(true);
 
@@ -271,6 +280,15 @@ export function AdminDashboard({ onLogout }: AdminDashboardProps) {
         const refreshed = await fetch(`/api/questions?examType=common-entrance&subject=${encodeURIComponent(formData.subject)}`);
         const json = await refreshed.json();
         setQuestions(json.questions || []);
+
+        // Notify other open tabs/devices to refresh their question cache (best-effort)
+        try {
+          const bc = new BroadcastChannel('exam-system');
+          bc.postMessage({ type: 'questions-updated', examType: 'common-entrance', subject: formData.subject, timestamp: new Date().toISOString() });
+          bc.close();
+        } catch (e) {
+          console.warn('BroadcastChannel not available:', e);
+        }
 
         setSuccessMessage('Question deleted successfully!');
         setShowSuccess(true);

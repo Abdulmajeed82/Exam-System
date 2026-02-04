@@ -33,8 +33,7 @@ The entrance exam system has been enhanced to support multi-subject examinations
   - Current subject (blue highlight)
 
 ### 3. Time Management
-- **30 minutes per subject** allocated
-- Total time = Number of subjects × 30 minutes
+- **Total time: 2 hours (120 minutes)** allocated for the entire entrance exam
 - Real-time countdown timer displayed
 - Warning when time is running low (< 10 minutes remaining)
 - Auto-submit when time expires

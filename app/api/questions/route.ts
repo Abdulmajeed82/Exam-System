@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import mongo from '@/lib/mongo';
 import { saveQuestion } from '@/lib/actions';
+import { generateWAECGenericQuestions, generateJAMBGenericQuestions } from '@/lib/generate-questions';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -8,9 +9,42 @@ export async function GET(request: Request) {
   const subject = searchParams.get('subject') || undefined;
   const full = searchParams.get('full') === 'true';
 
-  const questions = full
+  let questions = full
     ? await mongo.getQuestionsFromDb(examType, subject)
     : await mongo.getPublicQuestionsFromDb(examType, subject);
+
+  // If no questions exist for a WAEC/JAMB subject, generate and persist server-side so other clients can use them immediately
+  if ((questions == null || questions.length === 0) && subject && (examType === 'waec' || examType === 'jamb')) {
+    try {
+      let generated: any[] = [];
+      if (examType === 'waec') {
+        generated = generateWAECGenericQuestions(subject);
+      } else if (examType === 'jamb') {
+        generated = generateJAMBGenericQuestions(subject);
+      }
+
+      if (generated.length > 0) {
+        // Persist generated questions to MongoDB (best-effort)
+        for (const q of generated) {
+          try {
+            // Use mongo helper directly to avoid re-validation delays
+            await mongo.saveQuestionToDb(q as any);
+          } catch (e) {
+            console.warn('Failed to save generated question to DB:', e);
+          }
+        }
+
+        // Re-query to return the saved questions (full=true returns full set)
+        questions = full
+          ? await mongo.getQuestionsFromDb(examType, subject)
+          : await mongo.getPublicQuestionsFromDb(examType, subject);
+
+        console.log(`✅ Generated and saved ${questions.length} ${examType} questions for subject ${subject}`);
+      }
+    } catch (err) {
+      console.error('❌ Failed to generate or save questions server-side:', err);
+    }
+  }
 
   return NextResponse.json({ success: true, questions });
 }

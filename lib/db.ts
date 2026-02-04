@@ -178,63 +178,86 @@ export async function getQuestionsByExamType(
   examType: 'common-entrance' | 'waec' | 'jamb',
   subject?: string
 ): Promise<Question[]> {
+  // Always start with local questions (mock data)
   let filtered = questions.filter((q) => q.examType === examType);
   if (subject) {
     filtered = filtered.filter((q) => q.subject === subject);
   }
 
-  // API-first: Try fetching a large bank from external API when a subject is requested (only for WAEC/JAMB)
+  // If we have local questions, use them and enhance with API if available
+  if (filtered.length > 0) {
+    console.log(`✅ Using local questions: ${filtered.length} for ${examType}${subject ? ' - ' + subject : ''}`);
+  }
+
+  // Try to enhance with server MongoDB data (optional enhancement, not requirement)
+  if (typeof window !== 'undefined' && subject && filtered.length < 10) {
+    try {
+      const res = await fetch(`/api/questions?examType=${encodeURIComponent(examType)}&subject=${encodeURIComponent(subject)}&full=true`);
+      const data = await res.json();
+      if (res.ok && data && Array.isArray(data.questions) && data.questions.length > 0) {
+        try {
+          replaceQuestionsForSubject(examType, subject, data.questions);
+        } catch (e) {
+          console.warn('Could not replace local questions from server response:', e);
+        }
+        filtered = data.questions;
+        console.log(`✅ Enhanced with server questions: ${filtered.length}`);
+      }
+    } catch (e) {
+      console.log('Server DB not available, using local questions');
+    }
+  }
+
+  // For WAEC/JAMB: Try to enhance with external API (optional, not required)
+  // Always prioritize local mock data, API is just an enhancement
   const requireApi = process.env.NEXT_PUBLIC_REQUIRE_API === 'true';
-  if (subject && (filtered.length === 0 || requireApi) && (examType === 'waec' || examType === 'jamb')) {
+  const allowFallback = process.env.NEXT_PUBLIC_ALLOW_LOCAL_FALLBACK !== 'false'; // Default to true
+
+  // If we have enough local questions, skip API fetch
+  const hasEnoughQuestions = filtered.length >= 40;
+
+  if (subject && !hasEnoughQuestions && (examType === 'waec' || examType === 'jamb')) {
     const bankSize = parseInt(process.env.NEXT_PUBLIC_QUESTION_BANK_SIZE || '20000', 10);
     const pageSize = parseInt(process.env.NEXT_PUBLIC_QUESTION_PAGE_SIZE || '1000', 10);
-    const allowFallback = process.env.NEXT_PUBLIC_ALLOW_LOCAL_FALLBACK === 'true';
 
     try {
       const apiQuestions = await fetchQuestionsMultiPage(examType, subject, undefined, bankSize, pageSize);
 
       if (apiQuestions.length > 0) {
-        // Remove any existing questions for this subject to avoid duplicates when forcing API
-        if (requireApi) {
-          questions = questions.filter((q) => !(q.examType === examType && q.subject === subject));
-        }
-
-        // Persist API questions locally and re-filter
-        questions.push(...apiQuestions);
-        saveToStorage(STORAGE_KEYS.QUESTIONS, questions);
-        filtered = questions.filter((q) => q.examType === examType && q.subject === subject);
-        console.log(`✅ Fetched and stored ${filtered.length} questions from API for ${subject}`);
-      } else {
-        if (allowFallback) {
-          console.warn(`⚠️ API returned no questions for ${subject}. Falling back to local generator.`);
-          let generated: Question[] = [];
-          if (examType === 'waec') generated = generateWAECGenericQuestions(subject);
-          else if (examType === 'jamb') generated = generateJAMBGenericQuestions(subject);
-
-          questions.push(...generated);
+        // Merge API questions with local (remove duplicates based on questionText)
+        const localTexts = new Set(filtered.map(q => q.questionText));
+        const newQuestions = apiQuestions.filter(q => !localTexts.has(q.questionText));
+        
+        if (newQuestions.length > 0) {
+          questions.push(...newQuestions);
           saveToStorage(STORAGE_KEYS.QUESTIONS, questions);
-          filtered = questions.filter((q) => q.examType === examType && q.subject === subject);
-          console.log(`✅ Generated and stored ${filtered.length} local questions for ${subject}`);
-        } else {
-          console.error(`❌ No questions available for ${examType} - ${subject}. API returned none and local fallback is disabled.`);
-          return [];
+          filtered = [...filtered, ...newQuestions];
+          console.log(`✅ Enhanced with API questions: +${newQuestions.length} total: ${filtered.length}`);
         }
+      } else {
+        console.log('API returned no questions, using local mock data');
       }
     } catch (error) {
-      console.error('❌ Failed to fetch questions from API:', error);
-      if (allowFallback) {
-        console.warn('⚠️ Falling back to local generator due to API error.');
-        let generated: Question[] = [];
-        if (examType === 'waec') generated = generateWAECGenericQuestions(subject);
-        else if (examType === 'jamb') generated = generateJAMBGenericQuestions(subject);
+      console.log('API fetch failed, using local mock data');
+    }
+  }
 
-        questions.push(...generated);
-        saveToStorage(STORAGE_KEYS.QUESTIONS, questions);
-        filtered = questions.filter((q) => q.examType === examType && q.subject === subject);
-        console.log(`✅ Generated and stored ${filtered.length} local questions for ${subject}`);
-      } else {
-        return [];
-      }
+  // Generate additional questions if still not enough (fallback)
+  if (filtered.length < 20 && (examType === 'waec' || examType === 'jamb') && subject && allowFallback) {
+    console.log(`⚠️ Only ${filtered.length} questions found. Generating more...`);
+    let generated: Question[] = [];
+    if (examType === 'waec') generated = generateWAECGenericQuestions(subject);
+    else if (examType === 'jamb') generated = generateJAMBGenericQuestions(subject);
+
+    // Filter out duplicates
+    const localTexts = new Set(filtered.map(q => q.questionText));
+    const newGenerated = generated.filter(q => !localTexts.has(q.questionText));
+    
+    if (newGenerated.length > 0) {
+      questions.push(...newGenerated);
+      saveToStorage(STORAGE_KEYS.QUESTIONS, questions);
+      filtered = [...filtered, ...newGenerated];
+      console.log(`✅ Generated ${newGenerated.length} additional questions. Total: ${filtered.length}`);
     }
   }
 
@@ -262,6 +285,19 @@ export async function getQuestionsByExamType(
     filtered = shuffleArray(combined).slice(0, 60);
   }
 
+  // Final check: ensure we always return at least some questions from mock data
+  if (filtered.length === 0 && (examType === 'waec' || examType === 'jamb') && subject && allowFallback) {
+    console.log(`⚠️ No questions found at all. Generating fresh questions for ${subject}`);
+    let generated: Question[] = [];
+    if (examType === 'waec') generated = generateWAECGenericQuestions(subject);
+    else if (examType === 'jamb') generated = generateJAMBGenericQuestions(subject);
+    
+    questions.push(...generated);
+    saveToStorage(STORAGE_KEYS.QUESTIONS, questions);
+    filtered = generated;
+  }
+
+  console.log(`📚 Final questions count for ${examType}${subject ? ' - ' + subject : ''}: ${filtered.length}`);
   return filtered;
 }
 
@@ -340,65 +376,51 @@ export async function createExamSession(
   const isSingleSubject = typeof subjectOrSubjects === 'string';
   const subjects = isSingleSubject ? undefined : (subjectOrSubjects as string[]);
   const subject = isSingleSubject ? (subjectOrSubjects as string) : undefined;
-  
+
+  console.log(`📝 Creating exam session: ${examType}${subject ? ' - ' + subject : ''}${subjects ? ' - ' + subjects.join(', ') : ''}`);
+
   // Get questions for this exam
   let examQuestions: Question[] = [];
+  const allowFallback = process.env.NEXT_PUBLIC_ALLOW_LOCAL_FALLBACK !== 'false';
+
   if (subjects && subjects.length > 0) {
     // Multiple subjects - get questions for each subject
     for (const subj of subjects) {
       let subjectQuestions = await getQuestionsByExamType(examType, subj);
-
-      // If none found, try to fetch/generate on-demand (API-first), only for WAEC/JAMB
-      if (subjectQuestions.length === 0 && (examType === 'waec' || examType === 'jamb')) {
-        try {
-          const bankSize = parseInt(process.env.NEXT_PUBLIC_QUESTION_BANK_SIZE || '20000', 10);
-          const pageSize = parseInt(process.env.NEXT_PUBLIC_QUESTION_PAGE_SIZE || '1000', 10);
-          const allowFallback = process.env.NEXT_PUBLIC_ALLOW_LOCAL_FALLBACK === 'true';
-
-          const fetched = await fetchQuestionsMultiPage(examType, subj, undefined, bankSize, pageSize);
-          if (fetched.length > 0) {
-            replaceQuestionsForSubject(examType, subj, fetched);
-            subjectQuestions = fetched;
-          } else if (allowFallback) {
-            // Generate locally and persist
-            const generated = examType === 'waec' ? generateWAECGenericQuestions(subj) : generateJAMBGenericQuestions(subj);
-            replaceQuestionsForSubject(examType, subj, generated);
-            subjectQuestions = generated;
-          }
-        } catch (err) {
-          console.error(`❌ On-demand fetch/generate failed for ${examType} - ${subj}:`, err);
-        }
-      }
-
       examQuestions = [...examQuestions, ...subjectQuestions];
     }
   } else if (subject) {
     // Single subject
     examQuestions = await getQuestionsByExamType(examType, subject);
-
-    // Try on-demand fetch/generate if no questions available
-    if (examQuestions.length === 0 && (examType === 'waec' || examType === 'jamb')) {
-      try {
-        const bankSize = parseInt(process.env.NEXT_PUBLIC_QUESTION_BANK_SIZE || '20000', 10);
-        const pageSize = parseInt(process.env.NEXT_PUBLIC_QUESTION_PAGE_SIZE || '1000', 10);
-        const allowFallback = process.env.NEXT_PUBLIC_ALLOW_LOCAL_FALLBACK === 'true';
-
-        const fetched = await fetchQuestionsMultiPage(examType, subject, undefined, bankSize, pageSize);
-        if (fetched.length > 0) {
-          replaceQuestionsForSubject(examType, subject, fetched);
-          examQuestions = fetched;
-        } else if (allowFallback) {
-          const generated = examType === 'waec' ? generateWAECGenericQuestions(subject) : generateJAMBGenericQuestions(subject);
-          replaceQuestionsForSubject(examType, subject, generated);
-          examQuestions = generated;
-        }
-      } catch (err) {
-        console.error(`❌ On-demand fetch/generate failed for ${examType} - ${subject}:`, err);
-      }
-    }
   } else {
     // No subject specified - get all questions for exam type
     examQuestions = await getQuestionsByExamType(examType);
+  }
+
+  // Final safety check: generate questions if still none
+  if (examQuestions.length === 0 && (examType === 'waec' || examType === 'jamb')) {
+    console.log('⚠️ No questions found. Generating fallback questions...');
+    
+    if (subjects && subjects.length > 0) {
+      for (const subj of subjects) {
+        let generated: Question[] = [];
+        if (examType === 'waec') generated = generateWAECGenericQuestions(subj);
+        else if (examType === 'jamb') generated = generateJAMBGenericQuestions(subj);
+        
+        questions.push(...generated);
+        examQuestions = [...examQuestions, ...generated];
+      }
+    } else if (subject) {
+      let generated: Question[] = [];
+      if (examType === 'waec') generated = generateWAECGenericQuestions(subject);
+      else if (examType === 'jamb') generated = generateJAMBGenericQuestions(subject);
+      
+      questions.push(...generated);
+      examQuestions = generated;
+    }
+    
+    saveToStorage(STORAGE_KEYS.QUESTIONS, questions);
+    console.log(`✅ Generated ${examQuestions.length} fallback questions`);
   }
 
   // Shuffle combined questions for multi-subject JAMB or WAEC to randomize order
@@ -420,6 +442,8 @@ export async function createExamSession(
     totalQuestions: examQuestions.length,
   }; 
   examSessions.push(newSession);
+
+  console.log(`✅ Exam session created with ${examQuestions.length} questions`);
   return newSession;
 }
 

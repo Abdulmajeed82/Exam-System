@@ -1,41 +1,44 @@
-import React from "react"
-import type { Metadata } from 'next'
+'use client'; // Add this to the very top to handle the hydration check
+
+import React, { useState, useEffect } from "react"
 import { Analytics } from '@vercel/analytics/next'
 import './globals.css'
-
-export const metadata: Metadata = {
-  title: 'GMIS Exam Portal - Great Model International School',
-  description: 'Online examination platform for Common Entrance, WAEC, and JAMB CBT practice',
-  generator: 'v0.app',
-  icons: {
-    icon: [
-      {
-        url: '/icon-light-32x32.png',
-        media: '(prefers-color-scheme: light)',
-      },
-      {
-        url: '/icon-dark-32x32.png',
-        media: '(prefers-color-scheme: dark)',
-      },
-      {
-        url: '/icon.svg',
-        type: 'image/svg+xml',
-      },
-    ],
-    apple: '/apple-icon.png',
-  },
-}
+import { Navbar } from '@/components/navbar'
 
 export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode
 }>) {
+  // LAYER 3: The "Hydration Guard"
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   return (
-    <html lang="en">
-      <body className={`font-sans antialiased`}>
-        {children}
-        <Analytics />
+    <html lang="en" suppressHydrationWarning>
+      <body 
+        className="antialiased" 
+        style={{ fontFamily: 'Inter, system-ui, sans-serif' }}
+        suppressHydrationWarning
+      >
+        {/* Only render the UI once the client has "mounted". 
+            This prevents the server/client mismatch entirely. */}
+        {mounted ? (
+          <>
+            <Navbar />
+            {children}
+            <Analytics />
+          </>
+        ) : (
+          /* Show a simple empty state or loader while mounting to avoid the crash */
+          <div style={{ visibility: 'hidden' }}>
+            <Navbar />
+            {children}
+          </div>
+        )}
       </body>
     </html>
   )

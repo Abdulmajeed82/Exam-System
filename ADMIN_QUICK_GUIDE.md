@@ -162,5 +162,9 @@ The printed result includes:
 ## Security Note
 Only authorized admin/teacher accounts can access student results. Always log out when finished to protect student privacy.
 
+## Real-time question updates
+- The system now fetches questions from the MongoDB-backed API when a subject is requested so newly added questions are available immediately to other users.
+- When an admin adds or deletes a question from the dashboard, the app broadcasts a lightweight message (`BroadcastChannel`) to open tabs to reload their question cache. For cross-device updates where BroadcastChannel is not available, you can enable server polling by setting `NEXT_PUBLIC_POLL_QUESTIONS=true` (polls every ~15s).
+
 ## Need Help?
 Contact the system administrator if you encounter any issues or need additional features.

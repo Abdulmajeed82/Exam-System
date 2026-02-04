@@ -117,8 +117,8 @@ export function EntranceExamInterface({
     setCurrentSubjectIndex(0);
     setCurrentQuestionIndex(0);
 
-    // Set timer: 30 minutes per subject
-    const totalTime = selectedSubjects.length * 30 * 60; // in seconds
+    // Set timer: Fixed 2 hours (120 minutes) for the whole entrance exam
+    const totalTime = 2 * 60 * 60; // in seconds (2 hours)
     setTimeRemaining(totalTime);
   };
 
@@ -239,6 +239,32 @@ export function EntranceExamInterface({
     }
   };
 
+  // Listen to admin's updates (BroadcastChannel) and warm question cache for selected subjects.
+  useEffect(() => {
+    try {
+      const bc = new BroadcastChannel('exam-system');
+      const handler = async (ev: MessageEvent) => {
+        try {
+          const msg = ev.data;
+          if (msg?.type === 'questions-updated') {
+            // Only warm cache for relevant subjects to avoid disrupting active sessions
+            if (msg.subject && (selectedSubjects.includes(msg.subject) || !isExamStarted)) {
+              for (const subj of selectedSubjects) {
+                await getQuestionsByExamType('common-entrance', subj);
+              }
+            }
+          }
+        } catch (err) {
+          console.warn('Error handling exam-system message:', err);
+        }
+      };
+      bc.addEventListener('message', handler);
+      return () => bc.close();
+    } catch (e) {
+      // ignore
+    }
+  }, [selectedSubjects, isExamStarted]);
+
   const getTotalScore = () => {
     return subjectsProgress.reduce((sum, subj) => sum + (subj.score || 0), 0);
   };
@@ -305,8 +331,7 @@ export function EntranceExamInterface({
                     <span className="font-medium">Subjects Selected:</span> {selectedSubjects.join(', ')}
                   </p>
                   <p className="text-sm text-foreground">
-                    <span className="font-medium">Time Allocated:</span> {selectedSubjects.length * 30} minutes total
-                    ({selectedSubjects.length} subjects × 30 minutes each)
+                    <span className="font-medium">Time Allocated:</span> 120 minutes total (Fixed 2 hours)
                   </p>
                 </div>
               )}
