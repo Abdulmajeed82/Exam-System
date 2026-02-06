@@ -35,16 +35,34 @@ export function AdminDashboard({ onLogout }: { onLogout?: () => void }) {
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
-  // --- 1. FETCH QUESTIONS (Fixed to show options) ---
+  // --- DELETE LOGIC ---
+  const handleDeleteQuestion = async (id: string) => {
+    if (!confirm("Are you sure you want to permanently delete this question from MongoDB?")) return;
+    
+    try {
+      const res = await fetch('/api/questions', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        // Remove from local state immediately
+        setQuestions(prev => prev.filter(q => (q as any)._id !== id && q.id !== id));
+      } else {
+        alert("Delete failed: " + data.error);
+      }
+    } catch (err) {
+      alert("Error connecting to server");
+    }
+  };
+
   const handleViewQuestions = async () => {
     setLoading(true);
     try {
-      // Adding a timestamp prevents the browser from showing "old" data
       const res = await fetch(`/api/questions?examType=common-entrance&subject=${encodeURIComponent(formData.subject)}&full=true&t=${Date.now()}`);
       const data = await res.json();
-      if (data.success) {
-        setQuestions(data.questions || []);
-      }
+      if (data.success) setQuestions(data.questions || []);
     } catch (err) {
       console.error('Fetch error:', err);
     } finally {
@@ -52,19 +70,15 @@ export function AdminDashboard({ onLogout }: { onLogout?: () => void }) {
     }
   };
 
-  // --- 2. FETCH RESULTS (Fixed for Firefox/Chrome Sync) ---
   const handleViewResults = async () => {
     setLoading(true);
     try {
-      // "cache: no-store" tells Firefox to ignore local cache and ask MongoDB directly
       const res = await fetch(`/api/results?t=${Date.now()}`, { 
         cache: 'no-store',
         headers: { 'Pragma': 'no-cache' } 
       });
       const data = await res.json();
-      if (data.success) {
-        setResults(data.results || []);
-      }
+      if (data.success) setResults(data.results || []);
     } catch (err) {
       console.error('MongoDB Result Fetch failed:', err);
     } finally {
@@ -85,12 +99,7 @@ export function AdminDashboard({ onLogout }: { onLogout?: () => void }) {
       examType: 'common-entrance',
       questionNumber: Number(formData.questionNumber),
       questionText: formData.questionText,
-      options: { 
-        a: formData.optionA, 
-        b: formData.optionB, 
-        c: formData.optionC, 
-        d: formData.optionD 
-      },
+      options: { a: formData.optionA, b: formData.optionB, c: formData.optionC, d: formData.optionD },
       correctAnswer: formData.correctAnswer,
       explanation: formData.explanation || 'Exam Question'
     };
@@ -138,7 +147,7 @@ export function AdminDashboard({ onLogout }: { onLogout?: () => void }) {
           <Card className="max-w-2xl mx-auto">
             <CardHeader><CardTitle>Upload New Question</CardTitle></CardHeader>
             <CardContent>
-              {showSuccess && <div className="bg-green-100 text-green-700 p-3 rounded mb-4 border border-green-200 animate-pulse">✓ Saved to Cloud Database</div>}
+              {showSuccess && <div className="bg-green-100 text-green-700 p-3 rounded mb-4 border border-green-200">✓ Saved to Cloud Database</div>}
               <form onSubmit={handleAddQuestion} className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                     <select name="subject" value={formData.subject} onChange={handleInputChange} className="border p-2 rounded">
@@ -172,9 +181,18 @@ export function AdminDashboard({ onLogout }: { onLogout?: () => void }) {
                 <Button onClick={handleViewQuestions} variant="ghost" size="sm"><RefreshCcw size={16} className={loading ? "animate-spin" : ""} /></Button>
             </div>
             {questions.map((q: any) => (
-              <Card key={q._id || q.id} className="p-4 shadow-sm border-l-4 border-l-primary">
-                <div className="font-bold border-b mb-3 pb-2 text-slate-800">Q{q.questionNumber}: {q.questionText}</div>
-                {/* RENDER OPTIONS EXPLICITLY */}
+              <Card key={q._id || q.id} className="p-4 shadow-sm border-l-4 border-l-primary relative group">
+                <div className="flex justify-between items-start mb-3 border-b pb-2">
+                  <div className="font-bold text-slate-800">Q{q.questionNumber}: {q.questionText}</div>
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    className="text-red-500 hover:bg-red-50"
+                    onClick={() => handleDeleteQuestion(q._id || q.id)}
+                  >
+                    <Trash2 size={18} />
+                  </Button>
+                </div>
                 <div className="grid grid-cols-2 gap-4 text-sm mb-3">
                   <div className="p-2 bg-slate-50 rounded border"><span className="font-bold text-primary mr-2">A</span> {q.options?.a}</div>
                   <div className="p-2 bg-slate-50 rounded border"><span className="font-bold text-primary mr-2">B</span> {q.options?.b}</div>
@@ -186,7 +204,7 @@ export function AdminDashboard({ onLogout }: { onLogout?: () => void }) {
                 </div>
               </Card>
             ))}
-            {questions.length === 0 && !loading && <p className="text-center text-slate-400 py-10">No questions found for this subject.</p>}
+            {questions.length === 0 && !loading && <p className="text-center text-slate-400 py-10">No questions found.</p>}
           </div>
         )}
 
@@ -195,10 +213,7 @@ export function AdminDashboard({ onLogout }: { onLogout?: () => void }) {
           <Card>
             <CardHeader className="flex flex-row justify-between items-center border-b pb-4">
               <CardTitle>Cloud Sync: Student Results</CardTitle>
-              <div className="flex gap-2">
-                <Button onClick={handleViewResults} variant="outline" size="sm"><RefreshCcw size={14} className={loading ? "animate-spin mr-2" : "mr-2"}/> Sync Database</Button>
-                <Button onClick={() => window.print()} variant="outline" size="sm"><Printer size={14}/></Button>
-              </div>
+              <Button onClick={handleViewResults} variant="outline" size="sm"><RefreshCcw size={14} className={loading ? "animate-spin mr-2" : "mr-2"}/> Sync Database</Button>
             </CardHeader>
             <CardContent className="mt-4">
               <table className="w-full text-left">
@@ -214,7 +229,6 @@ export function AdminDashboard({ onLogout }: { onLogout?: () => void }) {
                   ))}
                 </tbody>
               </table>
-              {results.length === 0 && !loading && <div className="text-center py-20 text-slate-400">No data found in MongoDB. Check Chrome submission logs.</div>}
             </CardContent>
           </Card>
         )}
